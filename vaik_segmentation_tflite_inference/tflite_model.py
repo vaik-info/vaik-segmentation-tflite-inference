@@ -14,9 +14,9 @@ class TfliteModel:
         self.__load(input_saved_model_path, num_thread)
 
     def inference(self, input_image: np.ndarray) -> Tuple[Dict, np.ndarray]:
-        resized_image_array = self.__preprocess_image(input_image, self.model_input_shape[1:3])
+        resized_image_array, resized_image_shape, input_image_shape = self.__preprocess_image(input_image, self.model_input_shape[1:3])
         raw_pred = self.__inference(resized_image_array)
-        output = self.__output_parse(raw_pred)
+        output = self.__output_parse(raw_pred, resized_image_shape, input_image_shape)
         return output, raw_pred
 
     def __load(self, input_saved_model_path: str, num_thread: int):
@@ -35,7 +35,7 @@ class TfliteModel:
             self.interpreter.allocate_tensors()
         self.model_input_shape = self.interpreter.get_input_details()[0]['shape']
 
-    def __preprocess_image(self, input_image: np.ndarray, resize_input_shape: Tuple[int, int]) -> np.ndarray:
+    def __preprocess_image(self, input_image: np.ndarray, resize_input_shape: Tuple[int, int]) -> Tuple[np.ndarray, Tuple, Tuple]:
         if len(input_image.shape) != 3:
             raise ValueError('dimension mismatch')
         if not np.issubdtype(input_image.dtype, np.uint8):
@@ -51,7 +51,7 @@ class TfliteModel:
         resize_pil_image = pil_image.resize((int(resize_size[0]), int(resize_size[1])))
         resize_image = np.array(resize_pil_image)
         output_image[:resize_image.shape[0], :resize_image.shape[1], :] = resize_image
-        return output_image
+        return output_image, resize_image.shape, input_image.shape
 
     def __inference(self, resized_image: np.ndarray) -> np.ndarray:
         if len(resized_image.shape) != 3:
@@ -63,8 +63,14 @@ class TfliteModel:
         raw_pred = self.__get_output_tensor()[0]
         return raw_pred
 
-    def __output_parse(self, raw_pred: np.ndarray) -> Dict:
-        output_dict = {'labels': np.argmax(raw_pred[0], -1)}
+    def __output_parse(self, raw_pred: np.ndarray, resized_image_shape: Tuple, input_image_shape: Tuple) -> Dict:
+        arg_max_pred = np.argmax(raw_pred[0], -1)
+        arg_max_pred = arg_max_pred[:resized_image_shape[0], :resized_image_shape[1]]
+        arg_max_pred_image = Image.fromarray(arg_max_pred.astype(np.uint8))
+        arg_max_pred_image = arg_max_pred_image.resize((input_image_shape[1], input_image_shape[0]), resample=Image.NEAREST)
+        arg_max_array = np.asarray(arg_max_pred_image)
+        output_dict = {'labels': arg_max_array}
+
         return output_dict
 
     def __set_input_tensor(self, image: np.ndarray):
